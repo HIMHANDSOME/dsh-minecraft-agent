@@ -1,0 +1,52 @@
+# ============================================================
+#  本仓库只收录「自研源码 + 文档」。
+#  下列内容一律不入库：Mojang 专有二进制、运行态密钥、
+#  世界存档、日志、依赖与生成产物。
+# ============================================================
+
+# ---- Minecraft 服务端（Mojang 专有，再分发违反 Minecraft EULA）----
+minecraft-server-26.1/
+server.jar
+libraries/
+versions/
+
+# ---- 世界存档 / 日志 / 控制台管道 ----
+world/
+logs/
+*.log
+console.log
+server.in
+server.pid
+fifo-holder.pid
+session.lock
+
+# ---- 服务端运行态（server.properties 含 management-server-secret）----
+server.properties
+eula.txt
+usercache.json
+ops.json
+whitelist.json
+banned-ips.json
+banned-players.json
+.server_expected
+
+# ---- 依赖与生成产物 ----
+node_modules/
+build/cathedral/snapshots/
+build/cathedral/phase0-survey.json
+build/cathedral/verify-last.json
+publish/
+
+# ---- 资源包产物 / 参考图（含商标或来源不明素材）----
+skins/*.zip
+skins/pack-build/
+skins/preview*.png
+skins/deepseek-*.png
+tmp/
+
+# ---- 系统 / 编辑器 ----
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

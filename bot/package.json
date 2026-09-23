@@ -1,0 +1,19 @@
+{
+  "name": "dsh-minecraft-bot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Mineflayer-based Minecraft bot exposing a stdio MCP server for the DeepSeek agent",
+  "scripts": {
+    "connect": "node connect.js",
+    "mcp": "node mcp-server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "minecraft-data": "3.117.0",
+    "mineflayer": "4.39.0",
+    "mineflayer-pathfinder": "2.4.5",
+    "vec3": "^0.1.10",
+    "zod": "^4.6.5"
+  }
+}

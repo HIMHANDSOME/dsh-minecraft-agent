@@ -1,0 +1,80 @@
+{
+  "name": "Cathedralis Magna Montis",
+  "phase": "1-frozen",
+  "frozenAt": "2026-09-23",
+  "origin": {
+    "X0": 44,
+    "Y0": 122,
+    "Z0": 390
+  },
+  "axis": {
+    "note": "Minecraft 世界 +X 为东、+Z 为南；building.md 约定相对 x 增大指向东端、z<0 为北。故 X=X0+x、Z=Z0+z 直接成立，无需旋转。",
+    "rotation": "none"
+  },
+  "worldHeight": {
+    "min": -64,
+    "max": 319,
+    "towerTopY": 302,
+    "topMargin": 17
+  },
+  "site": {
+    "desc": "山谷中的山脊台地：谷底 y≈58，山脊自然台地 122/138，西侧为 64 格断崖直落谷底，东侧逐级降到 74/58。",
+    "terrainSteps": [
+      58,
+      74,
+      90,
+      106,
+      122,
+      138
+    ],
+    "cliffWestEdgeWorldX": 20,
+    "westTerrain": "教堂以西为湖（水面世界 y=58），故西广场做成湖岸大石埠，标高世界 y=58"
+  },
+  "regions": {
+    "work": {
+      "min": {
+        "x": -180,
+        "y": 40,
+        "z": 232
+      },
+      "max": {
+        "x": 460,
+        "y": 311,
+        "z": 570
+      }
+    }
+  },
+  "protected": [
+    {
+      "name": "既有中式庭院（上一轮作品，禁止改动）",
+      "min": {
+        "x": -432,
+        "y": 50,
+        "z": -122
+      },
+      "max": {
+        "x": -360,
+        "y": 100,
+        "z": -44
+      }
+    }
+  ],
+  "footprints": {
+    "cathedral": {
+      "rel": {
+        "x1": -6,
+        "x2": 280,
+        "z1": -64,
+        "z2": 64
+      }
+    },
+    "plaza": {
+      "rel": {
+        "x1": -46,
+        "x2": -6,
+        "z1": -60,
+        "z2": 60
+      }
+    }
+  }
+}

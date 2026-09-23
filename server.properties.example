@@ -1,0 +1,51 @@
+# ============================================================
+#  Minecraft 26.1 本机沙箱服务器配置样例
+# ============================================================
+#  用法：复制到 minecraft-server-26.1/server.properties 后按需修改。
+#
+#     mkdir -p minecraft-server-26.1
+#     cp server.properties.example minecraft-server-26.1/server.properties
+#
+#  ⚠️ 本文件不含任何密钥。真实的 server.properties 已被 .gitignore 排除，
+#     因为它含有 management-server-secret。
+# ============================================================
+
+# ---- 核心：仅供本机 bot 沙箱使用，安全边界就靠这两行 ----
+server-ip=127.0.0.1
+online-mode=false
+
+server-port=25565
+motd=DeepSeek Agent Sandbox (MC 26.1)
+max-players=5
+level-name=world
+level-seed=deepseek-agent-sandbox
+gamemode=survival
+difficulty=normal
+view-distance=8
+simulation-distance=6
+
+# ---- 管理面：全部关闭，控制台仅走命名管道 server.in ----
+enable-rcon=false
+rcon.password=
+enable-query=false
+management-server-enabled=false
+management-server-host=localhost
+management-server-port=0
+management-server-tls-enabled=true
+
+# ---- 管理密钥：留空 ----
+#  启用管理服务器时再自行生成一个强随机值。
+#  绝不要把真实密钥提交进版本控制；一旦提交进 Git 历史，
+#  必须吊销并重新生成，而不只是删文件。
+management-server-secret=
+
+# ---- 其他 ----
+allow-flight=true
+spawn-protection=0
+enforce-secure-profile=false
+white-list=false
+pvp=true
+
+# ⚠️ 不要把 server-ip 改成 0.0.0.0。
+#    本服务器使用 online-mode=false，一旦对局域网/公网开放，
+#    任何人都能以任意用户名加入并获得操作权限。
