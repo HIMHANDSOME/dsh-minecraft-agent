@@ -9,6 +9,13 @@
 #   ./run-agent.sh "在 Minecraft 里采集 1 个原木，然后报告你的坐标和背包"
 #   ./run-agent.sh --json "..."     # 输出 NDJSON 事件流
 #   MC_PROFILE=minecraft-ingame ./run-agent.sh --json "..."   # 走常驻 HTTP MCP（游戏内私聊用）
+#
+# 环境变量（与 run-agent.ps1 对齐；bot/ingame.js 用这两个）：
+#   MC_AGENT_JSON=1              等价于 --json
+#   MC_AGENT_SESSION_ID=<id>     等价于 --session-id <id>
+# 为什么要有环境变量版本：Windows 上 ingame.js 是用 `powershell -File` 拉起
+# run-agent.ps1 的，而 PowerShell 5.1 的 -File **收不到以 `--` 开头的参数**，
+# 于是 --json 丢失、harness 输出纯文本。走环境变量可完全绕开命令行解析。
 set -euo pipefail
 
 REPO="${DSH_REPO:-$HOME/deepseek-harness}"
@@ -25,4 +32,14 @@ TSX="$(node -e "process.stdout.write(require.resolve('tsx/esm',{paths:['$REPO']}
 # 造成 "does not provide an export named 'FiberState'" 这类假故障。必须显式指定。
 export TSX_TSCONFIG_PATH="${TSX_TSCONFIG_PATH:-$REPO/tsconfig.json}"
 cd "$HERE"
-exec node --import "$TSX" "$REPO/apps/cli/src/bin.ts" --profile "$PROFILE" "$@"
+
+# 环境变量开关 → 真正的命令行参数（放在 "$@" 之前，显式参数仍可覆盖）
+EXTRA=()
+if [ "${MC_AGENT_JSON:-}" = "1" ]; then
+  EXTRA+=(--json)
+fi
+if [ -n "${MC_AGENT_SESSION_ID:-}" ]; then
+  EXTRA+=(--session-id "$MC_AGENT_SESSION_ID")
+fi
+
+exec node --import "$TSX" "$REPO/apps/cli/src/bin.ts" --profile "$PROFILE" "${EXTRA[@]}" "$@"

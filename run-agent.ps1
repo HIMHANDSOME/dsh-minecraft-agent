@@ -51,6 +51,15 @@ $DshRepoDefault = Join-Path $HOME 'deepseek-harness'
 $DshRepo = if ($env:DSH_REPO) { $env:DSH_REPO } else { $DshRepoDefault }
 $ProfileName = if ($Profile) { $Profile } elseif ($env:MC_PROFILE) { $env:MC_PROFILE } else { 'minecraft' }
 
+# 开关也能从环境变量来。这不是冗余：**PowerShell 5.1 用 `-File` 启动脚本时，
+# `--json` 这类以 `--` 开头的参数收不到**（实测 `powershell -File run-agent.ps1
+# --json <task>` 里 harness 只收到任务文本，没有 --json，于是输出纯文本而不是
+# NDJSON）。而 bot/ingame.js 正是用 `-File` 拉起本脚本的，所以它一直拿不到
+# `session`/`final` 事件，表现为"退出码 0 但没有回答"。
+# 走环境变量就完全绕开命令行解析。命令行参数仍然优先，保持兼容。
+$JsonRequested = $Json -or ($env:MC_AGENT_JSON -eq '1')
+$SessionIdValue = if ($SessionId) { $SessionId } else { $env:MC_AGENT_SESSION_ID }
+
 function Write-Err2 { param([string]$m) Write-Host $m -ForegroundColor Red }
 
 # ---------------------------------------------------------------------------
@@ -64,8 +73,8 @@ function Write-Err2 { param([string]$m) Write-Host $m -ForegroundColor Red }
 # ---------------------------------------------------------------------------
 $agentArgs = @()
 $agentArgs += @('--profile', $ProfileName)
-if ($Json) { $agentArgs += '--json' }
-if ($SessionId) { $agentArgs += @('--session-id', $SessionId) }
+if ($JsonRequested) { $agentArgs += '--json' }
+if ($SessionIdValue) { $agentArgs += @('--session-id', $SessionIdValue) }
 if ($Task -and $Task.Count -gt 0) {
     # 任务描述可能含空格，但它必须是**单个** argv 元素
     $agentArgs += ($Task -join ' ')
@@ -126,11 +135,17 @@ if (Test-Path -LiteralPath $binTs) {
     $node = Get-Command node -ErrorAction SilentlyContinue
     if (-not $node) { throw '找不到 node，请先安装 Node.js 并把 node 加进 PATH' }
 
-    $tsconfig = Join-Path $DshRepo 'tsconfig.json'
-    if (-not (Test-Path -LiteralPath $tsconfig)) {
-        throw "找不到 $tsconfig（DSH 源码 checkout 不完整？）"
+    if (-not $env:TSX_TSCONFIG_PATH) {
+        # 优先用 tsconfig.base.json：根 tsconfig.json 只是 solution 文件
+        # （files: [] + references），而 paths 真正在 base 里。tsx 用根文件时
+        # 在本机实测会丢 @deepseek-ai/* 映射，报 52 个插件 "failed to import"。
+        $baseCfg = Join-Path $DshRepo 'tsconfig.base.json'
+        $tsconfig = if (Test-Path -LiteralPath $baseCfg) { $baseCfg } else { Join-Path $DshRepo 'tsconfig.json' }
+        if (-not (Test-Path -LiteralPath $tsconfig)) {
+            throw "找不到 tsconfig（DSH 源码 checkout 不完整？试过 tsconfig.base.json / tsconfig.json）"
+        }
+        $env:TSX_TSCONFIG_PATH = $tsconfig
     }
-    if (-not $env:TSX_TSCONFIG_PATH) { $env:TSX_TSCONFIG_PATH = $tsconfig }
 
     # tsx 的解析必须相对 DSH 仓库（它是仓库的依赖，不在本项目里）。
     # 用一个临时 .js 文件而不是 node -e：避免 PowerShell 5.1 对内联引号的转义差异，
@@ -138,8 +153,11 @@ if (Test-Path -LiteralPath $binTs) {
     $resolver = Join-Path ([System.IO.Path]::GetTempPath()) ("dsh-tsx-resolve-{0}.js" -f $PID)
     $resolverBody = @"
 const { createRequire } = require('node:module')
+const { pathToFileURL } = require('node:url')
 const req = createRequire(process.argv[2] + '/package.json')
-process.stdout.write(req.resolve('tsx/esm'))
+// 必须输出 file:// URL：node --import 在 Windows 上不接受裸盘符路径
+// （ERR_UNSUPPORTED_ESM_URL_SCHEME: Received protocol 'd:'）。
+process.stdout.write(pathToFileURL(req.resolve('tsx/esm')).href)
 "@
     Set-Content -LiteralPath $resolver -Value $resolverBody -Encoding ASCII
     try {
@@ -150,7 +168,7 @@ process.stdout.write(req.resolve('tsx/esm'))
     } finally {
         Remove-Item -LiteralPath $resolver -Force -ErrorAction SilentlyContinue
     }
-    if (-not $tsx -or -not (Test-Path -LiteralPath $tsx)) {
+    if (-not $tsx -or $tsx -notlike 'file:*') {
         throw "在 $DshRepo 里解析不到 tsx/esm（得到：'$tsx'）。先在 DSH 仓库执行一次 pnpm install。"
     }
 

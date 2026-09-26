@@ -505,10 +505,81 @@ Options:
 
 **结论**：
 - **一次性任务（`run-agent`）在两种版本上都能用** —— 最终回答直接走 stdout。
-- **游戏内 `/msg` 私聊目前只能在源码 checkout 上实现"对话记忆"**：`bot/ingame.js` 依赖
-  `--json` + `--session-id`。在 0.1.5-rc.3 上这两个参数会让 harness 立刻以
-  `unknown option` 退出，所以 daemon 的每个 turn 都会失败。
-  这是**已知限制**，不是配置错误。详见 [PLAN.md](PLAN.md) §9.5。
+- **游戏内 `/msg` 私聊（含对话记忆）需要源码 checkout**：`bot/ingame.js` 依赖
+  `--json` + `--session-id`，0.1.5-rc.3 上这两个参数会让 harness 立刻以 `unknown option` 退出。
+  按下面「安装 DSH 源码 checkout」做完即可 —— 本机已实测 **S5 5/5、S6 9/9、S7 7/7 全绿**。
+
+---
+
+## 安装 DSH 源码 checkout（游戏内私聊需要）
+
+> 只做一次性任务的话**不需要**这一节。要做游戏内 `/msg` 私聊（含对话记忆）才需要。
+
+本机实测可用的完整流程（约 30 分钟，含构建）：
+
+```powershell
+# 1) 钉在项目原本对齐的 tag 上（浅克隆，约 122 MB）
+$dsr = 'D:\HI\CODE\DSH\deepseek-harness'
+New-Item -ItemType Directory -Force $dsr | Out-Null
+Set-Location $dsr
+git init -q
+git remote add origin https://github.com/deepseek-ai/deepseek-harness.git
+git fetch --depth 1 origin refs/tags/dsh-v0.1.6-alpha.2:refs/tags/dsh-v0.1.6-alpha.2
+git checkout -q dsh-v0.1.6-alpha.2
+
+# 2) 放宽 npm 抓取（本机到 npmjs 很慢，单包可达 28~48s，默认超时会中断）
+@"
+fetch-retries=10
+fetch-retry-mintimeout=30000
+fetch-retry-maxtimeout=300000
+fetch-timeout=900000
+network-concurrency=4
+fetch-min-speed-ki-bps=1
+"@ | Set-Content .npmrc -Encoding UTF8
+
+# 3) 安装（CI=true 让 pnpm 在无 TTY 时允许清空 node_modules）
+$env:CI = 'true'
+pnpm install --frozen-lockfile
+
+# 4) 构建：**必须用 build:lib（host + client）**
+#    build:lib:host 不够 —— 会漏掉 typert-* / dsh-api-gateway 等 62 个包的 lib/*.js，
+#    导致 MCP 工具调用报 `Cannot read properties of undefined (reading 'prepare')`
+pnpm run build:lib
+
+# 5) 让源码 harness 用**它自己的** 0.1.6-alpha.2 包，而不是 npm 的 0.1.5-rc.3
+#    做法：给 profile 的 node_modules 建 junction，指向源码工作区包。
+#    注意：Windows 上 New-Item -ItemType SymbolicLink 需要管理员权限，**junction 不需要**。
+foreach ($prof in @('minecraft','minecraft-ingame')) {
+  $pf = "$env:USERPROFILE\.dsh\profiles\$prof\node_modules\@deepseek-ai"
+  New-Item -ItemType Directory -Force $pf | Out-Null
+  Get-ChildItem "$dsr\packages" -Directory -Recurse -Depth 2 | ForEach-Object {
+    $pj = Join-Path $_.FullName 'package.json'
+    if (-not (Test-Path $pj)) { return }
+    $j = Get-Content $pj -Raw | ConvertFrom-Json
+    if ($j.name -notlike '@deepseek-ai/*') { return }
+    $link = Join-Path $pf ($j.name -replace '^@deepseek-ai/','')
+    if (-not (Test-Path $link)) { cmd /c mklink /J "$link" "$($_.FullName)" | Out-Null }
+  }
+}
+
+# 6) 指向源码仓库（每次开新终端都要设，或写进系统环境变量）
+$env:DSH_REPO = $dsr
+.\run-daemon.ps1 start
+```
+
+已验证结果（源码 checkout + 上述配置）：
+
+| 测试 | 结果 |
+|---|---|
+| `run-agent.ps1` 一次性任务 + MCP 工具 | ✅ 回答含真实坐标/血量 |
+| S5 游戏内私聊交互 | ✅ **5/5**（连跑 3 次稳定） |
+| S6 真控制 + 对话记忆 | ✅ **9/9**（同一 sessionId 复用，第 2 轮 1 次工具调用即复述上一轮） |
+| S7 双角色协同 | ✅ **7/7** |
+
+> `--import` 的路径必须是 **`file://` URL**（Windows 上给裸 `D:\...` 会报
+> `ERR_UNSUPPORTED_ESM_URL_SCHEME`）；`run-agent.ps1` 已用 `pathToFileURL` 处理。
+> `TSX_TSCONFIG_PATH` 要指向 **`tsconfig.base.json`**（根 `tsconfig.json` 只是 solution 文件，
+> paths 真在 base 里；指错会看到 52 个插件 `failed to import`）。
 
 ---
 
@@ -526,10 +597,21 @@ Options:
 | `MC_VERSION` | `26.1` | 协议版本 |
 | `MC_MCP_PORT` | `8790` | daemon 的 MCP HTTP 端口 |
 | `MC_PROFILE` | `minecraft` | `run-agent` 用的 DSH profile（daemon 内部用 `minecraft-ingame`） |
+| `MC_AGENT_JSON` | — | `1` 时等价于 `--json`。`bot/ingame.js` 用它而不是命令行参数，见下方说明 |
+| `MC_AGENT_SESSION_ID` | — | 等价于 `--session-id <id>`，同上 |
+| `MC_INGAME_DEBUG` | — | `1` 时 daemon 记录每轮子进程的事件统计，排查"退出码 0 但没有回答"用 |
 | `MC_SITE_FILE` | `build/site.json` | 施工区定义文件 |
 | `MC_BUILD_AUDIT` | `logs/build-audit.jsonl` | 建造审计日志路径 |
 | `MC_AUDIT_LOG` | `logs/mcp-audit.jsonl` | MCP 工具调用审计日志路径 |
-| `DSH_REPO` | `~/deepseek-harness` | DSH 仓库位置；Windows 上请显式设成你的实际路径 |
+| `DSH_REPO` | `~/deepseek-harness` | DSH 源码 checkout 位置；指向它就启用"源码版"路径 |
+| `MC_AGENT_CMD` | — | 完全覆盖 `run-agent` 要执行的命令（最高优先级） |
+
+> **为什么 `--json` / `--session-id` 走环境变量而不是命令行参数**
+> Windows 上 `bot/ingame.js` 是用 `powershell -File run-agent.ps1 …` 拉起子进程的，
+> 而 **PowerShell 5.1 的 `-File` 收不到以 `--` 开头的参数**。实测
+> `powershell -File run-agent.ps1 --json <task>` 里 harness 只收到任务文本，
+> `--json` 直接丢失 → 输出纯文本而不是 NDJSON → 表现为"退出码 0 但没有回答"。
+> 换成 `MC_AGENT_JSON=1` 后完全绕开命令行解析，S5 从 4/5 变为 5/5。
 
 ---
 

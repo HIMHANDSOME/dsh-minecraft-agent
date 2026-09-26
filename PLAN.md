@@ -400,3 +400,52 @@ $ dsh --profile minecraft --resume <sid> "…" → error: unknown option '--resu
 解决方向（需另行决策）：① 改 `bot/ingame.js` 支持"无 `--json` / 无记忆"降级模式（回答仍可用，
 但每轮都是全新会话）；② 装 DSH 源码 checkout 并让 `run-agent` 走 tsx 路径（`run-agent.ps1` 已支持，
 只要 `DSH_REPO` 指向含 `apps\cli\src\bin.ts` 的仓库）。
+
+---
+
+# 增量 P11（决策：选 B）：装 DSH 源码 checkout，打通游戏内私聊全链路
+
+**决策**：用户选 **B** —— 装源码 checkout，拿到 `--json` + `--session-id`，保留完整对话记忆。
+
+## 11.1 做了什么
+
+| 步骤 | 结果 |
+|---|---|
+| 浅克隆 `deepseek-ai/deepseek-harness`，钉 tag **`dsh-v0.1.6-alpha.2`**（正是本项目原本对齐的版本） | `D:\HI\CODE\DSH\deepseek-harness`，122 MB |
+| `pnpm install --frozen-lockfile` | ✅（第一次因 npmjs 慢反复超时失败；放宽 `.npmrc` 抓取参数 + `CI=true` 后成功） |
+| `pnpm run build:lib`（host + client） | ✅（`build:lib:host` 不够，见 11.3 #4） |
+| 给 `minecraft` / `minecraft-ingame` profile 的 `node_modules` 建 **289 个 junction** 指向源码工作区包 | ✅ 运行时用源码的 0.1.6-alpha.2，而不是 npm 的 0.1.5-rc.3 |
+| `run-agent.ps1` / `run-agent.sh` / `bot/ingame.js` 适配 | ✅ |
+
+## 11.2 验收（全部实测）
+
+| 测试 | 结果 |
+|---|---|
+| 源码版 `run-agent.ps1` 普通任务 | ✅ 回答 `OK` |
+| 源码版 + MCP 工具 | ✅ `tool_result` 返回真实 `connected:true / position / inventory` |
+| **`--json` NDJSON** | ✅ 事件与 `ingame.js` 解析**完全对得上**：`session.sessionId` / `tool_call` / `final.text` |
+| **`--session-id` 续接会话** | ✅ 第 1 轮记住 `7391`，第 2 轮 **0 次工具调用**直接复述 `7391` |
+| **S5 游戏内私聊** | ✅ **5/5**（连跑 3 次稳定） |
+| **S6 真控制 + 对话记忆** | ✅ **9/9**（同一 sessionId 复用；T2 仅 1 次工具调用即复述上一轮"橡木 2 个"） |
+| **S7 双角色协同** | ✅ **7/7** |
+
+## 11.3 期间踩到并修掉的 8 个坑（每个都是实测定位，不是猜）
+
+| # | 现象 | 真因 | 修法 |
+|---|---|---|---|
+| 1 | `ERR_UNSUPPORTED_ESM_URL_SCHEME: Received protocol 'd:'` | Windows 上 `node --import` **必须是 `file://` URL**，不接受裸盘符路径 | `run-agent.ps1` 里改用 `pathToFileURL()` 生成 |
+| 2 | 52 个插件 `failed to import` | `TSX_TSCONFIG_PATH` 指向根 `tsconfig.json`，而它只是 solution 文件（`files: []` + `references`），**paths 真在 `tsconfig.base.json`** | 优先用 `tsconfig.base.json` |
+| 3 | `Cannot read properties of undefined (reading 'prepare')` | 源码 harness（0.1.6-alpha.2）与 profile 里 npm 的 0.1.5-rc.3 **混用**：`ctx.tools[TOOL_RUNTIME_SCHEDULER]` 的 symbol 来自源码，而 registry 由 npm 版构造 → `undefined` | 给两个 profile 建 junction 指向源码工作区包 |
+| 4 | 同上，且 `typert-*` 三个插件 `failed to import` | `build:lib:host` 只构建 host 侧，**62 个包没有产出 `lib/*.js`** | 改跑 `pnpm run build:lib`（host + client） |
+| 5 | `New-Item -ItemType SymbolicLink` 报 `Administrator privilege required` | Windows 默认不允许非管理员建符号链接（`AllowDevelopmentWithoutDevLicense=1` 也不够） | 改用 **junction**（`mklink /J`），不需要特权 |
+| 6 | `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` | `--no-optional` 破坏了 modules 状态，pnpm 要清空重建但无 TTY 时拒绝 | `$env:CI='true'` |
+| 7 | **`run-agent.ps1` 退出码 0 但 stdout 一个字节都没有** | 原生命令 stdout 会进**函数返回值**，`exit (Invoke-Harness ...)` 拿到 `@(<回答>, <退出码>)`，`exit` 只吃最后一个元素 → 回答被丢弃 | 加 `\| Out-Host`，让函数只返回退出码 |
+| 8 | **`ingame.js` 拿不到 `final` 事件**（S5 卡在 4/5） | Windows 上子进程是 `powershell -File run-agent.ps1`，而 **PowerShell 5.1 的 `-File` 收不到以 `--` 开头的参数** → `--json` 丢失 → harness 输出纯文本 | 改用环境变量 `MC_AGENT_JSON` / `MC_AGENT_SESSION_ID` 传递，完全绕开命令行解析（`.ps1` 与 `.sh` 都支持） |
+
+## 11.4 仍未完全稳定的一处（如实记录）
+
+S5 在"源码版 + junction 对齐"刚打通时出现过两次 4/5：`mc_status`/`mc_inventory` 都真实执行了
+（审计日志可证），但该轮 harness **没有发出 `final` 事件**（`exit=0`、stdout 无 `final`）。
+改成环境变量传参后连跑 5 次 + 3 次全部 5/5，未再复现，因此归因于修好前的残留；
+但**没有证据证明它绝不会再发生**。已加 `MC_INGAME_DEBUG=1` 开关，届时可打出每轮的事件统计
+（`exit` / `stdoutBytes` / `events` / `textLen`）用于定位。

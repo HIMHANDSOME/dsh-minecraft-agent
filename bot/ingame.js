@@ -122,14 +122,20 @@ export function createIngameBridge({ manager, log }) {
   /** 跑一次 DSH headless，返回事件流解析结果。 */
   function runAgent(prompt, sessionId) {
     return new Promise((resolve, reject) => {
-      const args = ['--json']
-      if (sessionId) args.push('--session-id', sessionId)
-      args.push(prompt)
-
-      const cmd = resolveAgentCommand(args)
+      // **不要把 --json / --session-id 放进 argv**：Windows 上这一层是
+      // `powershell -File run-agent.ps1 …`，而 PowerShell 5.1 的 `-File`
+      // 收不到以 `--` 开头的参数，harness 只会拿到任务文本，于是输出纯文本
+      // 而不是 NDJSON —— 表现为"退出码 0 但没有回答"（本机实测复现）。
+      // 改用环境变量传递，完全绕开命令行解析；run-agent.ps1 与 run-agent.sh 都认。
+      const cmd = resolveAgentCommand([prompt])
       const child = spawn(cmd.cmd, cmd.args, {
         cwd: ROOT,
-        env: { ...process.env, MC_PROFILE: profile },
+        env: {
+          ...process.env,
+          MC_PROFILE: profile,
+          MC_AGENT_JSON: '1',
+          ...(sessionId ? { MC_AGENT_SESSION_ID: sessionId } : {}),
+        },
       })
       let stdout = ''
       let stderr = ''
@@ -151,7 +157,26 @@ export function createIngameBridge({ manager, log }) {
       })
       child.on('close', (code) => {
         clearTimeout(timer)
-        resolve({ code, stdout, stderr, ...parseEvents(stdout) })
+        const parsed = parseEvents(stdout)
+        // MC_INGAME_DEBUG=1 时记录本轮子进程的原始形状。排查"退出码 0 但没有回答"
+        // 这类问题时，只有它能区分「没跑起来」「跑了但没 final 事件」「final 是空的」。
+        if (process.env.MC_INGAME_DEBUG) {
+          const kinds = {}
+          for (const line of stdout.split('\n')) {
+            const t = line.trim()
+            if (!t.startsWith('{')) continue
+            try {
+              const ev = JSON.parse(t)
+              kinds[ev.type] = (kinds[ev.type] ?? 0) + 1
+            } catch {}
+          }
+          log(
+            `[debug] exit=${code} stdoutBytes=${stdout.length} stderrBytes=${stderr.length} ` +
+              `events=${JSON.stringify(kinds)} textLen=${parsed.text?.length ?? 0} ` +
+              `stdoutHead=${JSON.stringify(stdout.slice(0, 160))}`,
+          )
+        }
+        resolve({ code, stdout, stderr, ...parsed })
       })
     })
   }
