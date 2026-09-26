@@ -337,3 +337,66 @@ Error: dsh: profile "minecraft" does not exist; create it with 'dsh plugin --pro
 ```
 
 也就是说 **MCP 接入 profile 尚未配置**（README「配置要点」里那段）。配好之后 `run-agent.ps1` 与 daemon 的游戏内私聊才算全链路可用。
+
+---
+
+# 增量 P10：配置 DSH profile 接入（实机完成）
+
+**追加需求**：把 DSH 的 `minecraft` / `minecraft-ingame` profile 真正建出来，让一次性任务能跑。
+
+## 10.1 DSH 的 profile 机制与 README 旧说法不符
+
+实测 `dsh 0.1.5-rc.3 --help` 与 `dsh-app-boot` 的 `PROFILE_TEMPLATES`：profile **不是**"复制 `headless` 目录再改 `cordis.patch.yml`"，
+而是 **`dsh --from-default-profile <模板>` 首次使用时自动创建**，内置模板 `acp / web / headless / sdk / sdk-minimal`。
+每个 profile 的 `package.json` 里 `dsh.profile.bundles` 决定装载哪几个 bundle（`dsh-base` + `dsh-headless`），
+而 `@deepseek-ai/dsh-mcp-client` **不是 bundle**（它的 package.json 没有 `dsh.bundle`），必须用 `cordis.patch.yml` 的 `insert` 行引入。
+
+## 10.2 实际写入的东西
+
+| 路径 | 内容 |
+|---|---|
+| `~\.dsh\profiles\minecraft\` | `package.json`（bundles = dsh-base + dsh-headless）、`cordis.yml`、`cordis.patch.yml`（stdio MCP）、`pnpm-workspace.yaml` |
+| `~\.dsh\profiles\minecraft-ingame\` | 同上，`cordis.patch.yml` 换成 streamable-http → `http://127.0.0.1:8790/mcp` |
+| `~\.dsh\profiles\web\cordis.patch.yml` | 追加 stdio MCP（`failOnStartupError: false`）；**原文件已备份**为 `cordis.patch.yml.bak-before-minecraft-20260926-215800` |
+
+## 10.3 验收
+
+| 项 | 结果 |
+|---|---|
+| `dsh --profile minecraft --dump-config` | exit 0，组合里能看到 `minecraft-mcp` 行 ✅ |
+| `dsh --profile minecraft-ingame --dump-config` | exit 0 ✅ |
+| `dsh --profile web --dump-config` | exit 0，`minecraft-mcp` 行在 ✅ |
+| `run-agent.ps1 "…mc_status…"` | agent 真实调用 `mcp__minecraft__mc_status`，stdout 返回 `机器人 DeepSeekBot 当前在主世界坐标 (6.5, 74, 7.5)，血量 20/20` ✅ |
+| `run-daemon.ps1 start` | `DeepSeekBot` 已登入，`/health` → `connected:true` ✅ |
+
+## 10.4 配置期间又踩的 3 个坑
+
+| # | 现象 | 真因 | 修法 |
+|---|---|---|---|
+| 1 | `failed to parse overlay ... YAMLException: missed comma between flow collection entries` | YAML **flow 序列**（`[` 开头）里 `#` **不是注释**，我在条目之间写了中文注释 | 改成 block 序列（每项以 `- ` 开头），注释写在顶层 |
+| 2 | `run-agent.ps1` 退出码 1，只打印 `[mc-mcp] MCP server ready` 就结束 | `$ErrorActionPreference='Stop'` 把 MCP 子进程写 stderr 的日志当 NativeCommandError 终止错误 | `Invoke-Harness` 里临时切 `Continue`（与 Java 版本探测同一类问题） |
+| 3 | **`run-agent.ps1` 退出码 0 但 stdout 一个字节都没有**，而直接 `dsh` 同样的任务能答 | 原生命令的 stdout 会进**函数返回值**，`exit (Invoke-Harness ...)` 拿到的是 `@(<回答>, <退出码>)`，`exit` 只吃最后一个元素 → **回答被丢弃** | `& $Exe @Arguments \| Out-Host`，让函数只返回退出码 |
+
+## 10.5 已知限制：游戏内私聊在本机 DSH 版本上不可用
+
+本项目原是在 **DSH 源码 checkout 0.1.6-alpha.2** 上开发的，那里 headless 支持
+`--json`（NDJSON 事件流）与 `--session-id`（续接会话）；而本机 `npm i -g` 装的是 **0.1.5-rc.3**，
+`dsh --profile <x> --help` 只暴露一个 `-h/--help`。实测：
+
+```
+$ dsh --profile minecraft --json "…"        → error: unknown option '--json'   (exit 1)
+$ dsh --profile minecraft --session-id x "…" → error: unknown option '--session-id'
+$ dsh --profile minecraft --resume <sid> "…" → error: unknown option '--resume'   (--help 示例里有，实际没有)
+```
+
+而 `dsh-headless/lib/index.js` 的 `run()` 每次都 `sessionId: \`session-${randomUUID()}\``
+**新建会话**，没有任何续接入口。因此：
+
+- **一次性任务（`run-agent`）两种版本都能用** —— 最终回答直接走 stdout。
+- **游戏内 `/msg` 私聊的"对话记忆"只在源码 checkout 上能实现**：`bot/ingame.js` 依赖
+  `--json --session-id`，在 0.1.5-rc.3 上每个 turn 都会以 `unknown option` 立刻失败。
+  这是**版本能力缺口，不是配置错误**。
+
+解决方向（需另行决策）：① 改 `bot/ingame.js` 支持"无 `--json` / 无记忆"降级模式（回答仍可用，
+但每轮都是全新会话）；② 装 DSH 源码 checkout 并让 `run-agent` 走 tsx 路径（`run-agent.ps1` 已支持，
+只要 `DSH_REPO` 指向含 `apps\cli\src\bin.ts` 的仓库）。

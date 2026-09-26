@@ -55,28 +55,69 @@ function Write-Err2 { param([string]$m) Write-Host $m -ForegroundColor Red }
 
 # ---------------------------------------------------------------------------
 # 组装要传给 harness 的参数
+#
+# 必须用**普通数组**（@() + +=），不能用 List[string] + .ToArray()：
+# 想把它 splat 成多个 argv 时，`@($list.ToArray())` 会被 PowerShell 当成
+# 「一个元素是数组」的嵌套数组，于是参数被塞成一个字符串传给 node，
+# harness 收到的任务文本是错的 —— 表现为**退出码 0 但没有任何回答**
+# （本机实测：直接 dsh 能答，走本脚本就哑了）。普通数组 @() 没有这个坑。
 # ---------------------------------------------------------------------------
-$agentArgs = New-Object System.Collections.Generic.List[string]
-$agentArgs.Add('--profile'); $agentArgs.Add($ProfileName)
-if ($Json) { $agentArgs.Add('--json') }
-if ($SessionId) { $agentArgs.Add('--session-id'); $agentArgs.Add($SessionId) }
+$agentArgs = @()
+$agentArgs += @('--profile', $ProfileName)
+if ($Json) { $agentArgs += '--json' }
+if ($SessionId) { $agentArgs += @('--session-id', $SessionId) }
 if ($Task -and $Task.Count -gt 0) {
-    # 任务描述可能含空格，但它是单个 argv 元素；PowerShell 的 & 调用运算符会正确传参
-    $agentArgs.Add(($Task -join ' '))
+    # 任务描述可能含空格，但它必须是**单个** argv 元素
+    $agentArgs += ($Task -join ' ')
 }
 
 # ---------------------------------------------------------------------------
 # 决定怎么启动
 # ---------------------------------------------------------------------------
+# 两个必须踩过才知道的坑：
+#
+# 1) stderr：harness 与它的 MCP 子进程都往 **stderr** 写日志（MCP 协议要求
+#    stdout 只走 JSON-RPC，日志必须走 stderr）。在 $ErrorActionPreference='Stop'
+#    下，原生命令写 stderr 会被当成 NativeCommandError 终止错误，脚本会在任务
+#    真正开始前就退出（实测只打印了 `[mc-mcp] MCP server ready` 然后 exit 1）。
+#    → 调用 harness 期间临时切回 Continue。
+#
+# 2) stdout：原生命令的 stdout 会被 PowerShell 收进**函数返回值**。如果直接
+#    `exit (Invoke-Harness ...)`，返回的就成了 @(<回答文本>, <退出码>) 这样一个
+#    集合，`exit` 只吃最后一个元素当退出码，**回答文本被丢弃** —— 表现为
+#    "退出码 0 但 stdout 一个字节都没有"（实测：函数内明明拿到了回答，
+#    文件里记录了 `INVOKE returned=机器人位于…`，控制台却什么都没有）。
+#    → 用 `| Out-Host` 把子进程 stdout 写回控制台，让函数只返回退出码。
+function Invoke-Harness {
+    param([string]$Exe, [object[]]$Arguments, [string[]]$PreArgs = @())
+    $savedEap = $ErrorActionPreference
+    $savedNative = $null
+    try {
+        $ErrorActionPreference = 'Continue'
+        if ($PSVersionTable.PSVersion.Major -ge 7) {
+            $savedNative = $PSNativeCommandUseErrorActionPreference
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        Set-Location $RepoRoot
+        if ($PreArgs.Count -gt 0) {
+            & $Exe @PreArgs @Arguments | Out-Host
+        } else {
+            & $Exe @Arguments | Out-Host
+        }
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedEap
+        if ($null -ne $savedNative) { $PSNativeCommandUseErrorActionPreference = $savedNative }
+    }
+}
+
 # 1) 用户显式指定
 if ($env:MC_AGENT_CMD) {
     $exe = $env:MC_AGENT_CMD
     if (-not (Get-Command $exe -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath $exe)) {
         throw "MC_AGENT_CMD 指向的命令不存在: $exe"
     }
-    Set-Location $RepoRoot
-    & $exe @agentArgs
-    exit $LASTEXITCODE
+    exit (Invoke-Harness -Exe $exe -Arguments $agentArgs)
 }
 
 # 2) 源码 checkout：显式指定 tsx 的 tsconfig，避免 FiberState 假故障
@@ -102,7 +143,10 @@ process.stdout.write(req.resolve('tsx/esm'))
 "@
     Set-Content -LiteralPath $resolver -Value $resolverBody -Encoding ASCII
     try {
-        $tsx = (& $node.Source $resolver $DshRepo 2>$null | Out-String).Trim()
+        $savedEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $tsx = (& $node.Source $resolver $DshRepo 2>$null | Out-String).Trim() }
+        finally { $ErrorActionPreference = $savedEap }
     } finally {
         Remove-Item -LiteralPath $resolver -Force -ErrorAction SilentlyContinue
     }
@@ -110,17 +154,13 @@ process.stdout.write(req.resolve('tsx/esm'))
         throw "在 $DshRepo 里解析不到 tsx/esm（得到：'$tsx'）。先在 DSH 仓库执行一次 pnpm install。"
     }
 
-    Set-Location $RepoRoot
-    & $node.Source --import $tsx $binTs @agentArgs
-    exit $LASTEXITCODE
+    exit (Invoke-Harness -Exe $node.Source -PreArgs @('--import', $tsx) -Arguments (@($binTs) + $agentArgs))
 }
 
 # 3) npm 全局安装的 dsh
 $dsh = Get-Command dsh -ErrorAction SilentlyContinue
 if ($dsh) {
-    Set-Location $RepoRoot
-    & $dsh.Source @agentArgs
-    exit $LASTEXITCODE
+    exit (Invoke-Harness -Exe $dsh.Source -Arguments $agentArgs)
 }
 
 # 4) 都没有：给出可操作的提示

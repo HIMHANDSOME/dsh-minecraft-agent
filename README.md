@@ -400,43 +400,115 @@ notepad build\site.json
 
 ## 配置要点
 
-一次性任务 `~/.dsh/profiles/minecraft/cordis.patch.yml`：
+先把两个 profile 建出来。**注意 DSH 的机制**（0.1.5-rc.3 实测，`dsh --help`）：
+
+- profile 不是"复制 headless 目录"来的，而是 **`dsh --from-default-profile <模板>` 首次使用时自动创建**；
+  内置模板有 `acp` / `web` / `headless` / `sdk` / `sdk-minimal`。
+- 每个 profile 的 `package.json` 里 `dsh.profile.bundles` 决定**装载哪几个 bundle**；
+  `cordis.patch.yml` 是用户层，用来 `insert` 插件行。
+- `@deepseek-ai/dsh-mcp-client` **不是 bundle**，它是普通插件，必须通过 `insert` 行引入。
+
+Windows：
+
+```powershell
+# 1) 用 headless 模板建 profile（会自动生成 package.json / cordis.yml / cordis.patch.yml / pnpm-workspace.yaml）
+#    只想建不跑任务的话，随便给它一个 task 再 Ctrl+C 也行；或者直接建目录后手抄下面的文件
+dsh --profile minecraft --from-default-profile headless "warm up"
+
+# 2) 编辑 ~\.dsh\profiles\minecraft\cordis.patch.yml，写入 MCP 接入
+notepad "$env:USERPROFILE\.dsh\profiles\minecraft\cordis.patch.yml"
+```
+
+`~/.dsh/profiles/minecraft/cordis.patch.yml`（一次性任务，stdio）：
 
 ```yaml
 - insert:
     - id: minecraft-mcp
-      name: "@deepseek-ai/dsh-mcp-client"
+      name: '@deepseek-ai/dsh-mcp-client'
       config:
         serverName: minecraft
         transport: stdio
-        command: <node 绝对路径>          # Windows 例：C:\Program Files\nodejs\node.exe
-        args: [ <仓库绝对路径>/bot/mcp-server.js ]
-        cwd: <仓库绝对路径>/bot
+        command: 'C:\Program Files\nodejs\node.exe'   # node 绝对路径
+        args:
+          - 'D:\HI\CODE\DSH\MC\ORI\bot\mcp-server.js'
+        cwd: 'D:\HI\CODE\DSH\MC\ORI\bot'
         toolCallTimeoutMs: 180000   # 必须 > mc_collect 的 45s，否则长任务被传输层掐断
         failOnStartupError: true
 ```
 
-游戏内交互 `~/.dsh/profiles/minecraft-ingame/cordis.patch.yml`（差别只有 transport）：
+`~/.dsh/profiles/minecraft-ingame/cordis.patch.yml`（游戏内交互，差别只有 transport）：
 
 ```yaml
 - insert:
     - id: minecraft-mcp
-      name: "@deepseek-ai/dsh-mcp-client"
+      name: '@deepseek-ai/dsh-mcp-client'
       config:
         serverName: minecraft
         transport: streamable-http
         url: http://127.0.0.1:8790/mcp
         toolCallTimeoutMs: 180000
-        failOnStartupError: true
+        failOnStartupError: false
 ```
 
-> Windows 用户注意：YAML 里的 Windows 路径要么用正斜杠 `C:/tools/node/node.exe`，要么用单引号包住 `'C:\tools\node\node.exe'`——**双引号里 `\n`、`\t` 会被当转义字符**。
+`web` profile 里也写入了 stdio 版（`failOnStartupError: false`），这样你在本 GUI 会话里
+也能直接调用 `mcp__minecraft__mc_*`。原文件已备份为 `cordis.patch.yml.bak-before-minecraft-<时间戳>`，
+删掉那一段即可完全回退。`web` 的 `patchReload` 是 `live`，改完通常**无需重启**；
+若工具没出现，再重启 `dsh web`。
 
-两个 profile 都基于 `headless` 模板，权限预设收紧为 **`read-only`**（Minecraft 工具不需要文件写权限），
-**完全不影响**你正在用的 `web` profile。
+### 三个必须注意的坑（都实测过）
 
-`web` profile 里也写入了 stdio 版配置（`failOnStartupError: false`，避免机器人挂掉连累 GUI 启动），
-**但需要重启 `dsh web` 才生效**；原文件已备份为 `cordis.patch.yml.bak-before-minecraft-<时间戳>`。
+**1. 顶层用 block 序列，不要用 `[ ... ]`**
+
+YAML 的 flow 序列（`[` 开头）里 **`#` 不是注释**。中文注释写在条目之间会把解析搞崩：
+
+```
+Error: dsh: failed to parse overlay .../cordis.patch.yml:
+  YAMLException: missed comma between flow collection entries
+```
+
+**2. Windows 路径要加引号**
+
+路径里含空格（`C:\Program Files\...`）必须用单引号包住；或者用正斜杠。
+**不要用双引号**——`"C:\tools\node\node.exe"` 里的 `\n`、`\t` 会被当转义字符。
+
+**3. 验证而不启动**
+
+```powershell
+dsh --profile minecraft --dump-config     # 组合校验：能看到 minecraft-mcp 行 = 配置生效
+```
+
+权限预设：`headless` 模板本身不含文件写工具，Minecraft 工具也不需要文件写权限，
+所以这两个 profile **不会**让 Agent 碰你的文件系统；`web` profile 保持你原来的设置不变。
+
+---
+
+## 与旧版 DSH 的差异（重要）
+
+本项目最初是在 **DSH 源码 checkout（0.1.6-alpha.2）** 上开发的，那里的 headless 支持
+`--json`（NDJSON 事件流）与 `--session-id`（续接会话）。**`npm i -g @deepseek-ai/dsh`
+装出来的 0.1.5-rc.3 两者都没有**：
+
+```
+$ dsh --profile minecraft --help
+Usage: dsh --profile headless [options] [task...]
+Options:
+  -h, --help  show this help
+```
+
+| 能力 | 源码 checkout 0.1.6-alpha.2 | npm 全局 0.1.5-rc.3 |
+|---|---|---|
+| 一次性任务 | ✅ | ✅ |
+| `--json` NDJSON 事件流 | ✅ | ❌ `unknown option '--json'` |
+| `--session-id` 续接会话 | ✅ | ❌ `unknown option '--session-id'` |
+| `--resume` | — | ❌（`dsh --help` 的示例里有，但实际不支持） |
+| MCP 接入 | ✅ | ✅ |
+
+**结论**：
+- **一次性任务（`run-agent`）在两种版本上都能用** —— 最终回答直接走 stdout。
+- **游戏内 `/msg` 私聊目前只能在源码 checkout 上实现"对话记忆"**：`bot/ingame.js` 依赖
+  `--json` + `--session-id`。在 0.1.5-rc.3 上这两个参数会让 harness 立刻以
+  `unknown option` 退出，所以 daemon 的每个 turn 都会失败。
+  这是**已知限制**，不是配置错误。详见 [PLAN.md](PLAN.md) §9.5。
 
 ---
 
