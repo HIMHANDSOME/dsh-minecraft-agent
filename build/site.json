@@ -1,80 +1,42 @@
 {
-  "name": "Cathedralis Magna Montis",
-  "phase": "1-frozen",
-  "frozenAt": "2026-09-23",
-  "origin": {
-    "X0": 44,
-    "Y0": 122,
-    "Z0": 390
-  },
+  "_comment": [
+    "施工区模板。请按自己的世界勘察结果改掉下面所有数值后再施工。",
+    "builder-core.js 只读取本文件，不猜坐标：凡是没在这里声明的区域，一律不接受写入。",
+    "字段说明：",
+    "  origin        世界原点（相对坐标的基准），由 PHASE 0 勘察后锁定",
+    "  worldHeight   世界可建上下界，用于确认总高不会越界",
+    "  regions.work  允许写入的长方体（绝对世界坐标，含端点）",
+    "  protected[]   保护圈（既有作品、重要地形），任何写入碰到都会被拒绝",
+    "  extraAllowedBlocks  在 builder-core.js 默认材料白名单之外追加的方块名"
+  ],
+  "name": "unnamed-project",
+  "phase": "template",
+  "frozenAt": null,
+
+  "origin": { "X0": 0, "Y0": 64, "Z0": 0 },
+
   "axis": {
-    "note": "Minecraft 世界 +X 为东、+Z 为南；building.md 约定相对 x 增大指向东端、z<0 为北。故 X=X0+x、Z=Z0+z 直接成立，无需旋转。",
+    "note": "相对坐标 -> 世界坐标的映射：X=X0+x, Y=Y0+y, Z=Z0+z。若世界方位与设计不一致，必须先记录旋转，不能直接把相对坐标当世界坐标用。",
     "rotation": "none"
   },
-  "worldHeight": {
-    "min": -64,
-    "max": 319,
-    "towerTopY": 302,
-    "topMargin": 17
-  },
+
+  "worldHeight": { "min": -64, "max": 319, "topMargin": 8 },
+
   "site": {
-    "desc": "山谷中的山脊台地：谷底 y≈58，山脊自然台地 122/138，西侧为 64 格断崖直落谷底，东侧逐级降到 74/58。",
-    "terrainSteps": [
-      58,
-      74,
-      90,
-      106,
-      122,
-      138
-    ],
-    "cliffWestEdgeWorldX": 20,
-    "westTerrain": "教堂以西为湖（水面世界 y=58），故西广场做成湖岸大石埠，标高世界 y=58"
+    "desc": "在此描述地形、台地、朝向与周边既有建筑。",
+    "terrainSteps": []
   },
+
   "regions": {
     "work": {
-      "min": {
-        "x": -180,
-        "y": 40,
-        "z": 232
-      },
-      "max": {
-        "x": 460,
-        "y": 311,
-        "z": 570
-      }
+      "min": { "x": -64, "y": 0, "z": -64 },
+      "max": { "x": 64, "y": 200, "z": 64 }
     }
   },
-  "protected": [
-    {
-      "name": "既有中式庭院（上一轮作品，禁止改动）",
-      "min": {
-        "x": -432,
-        "y": 50,
-        "z": -122
-      },
-      "max": {
-        "x": -360,
-        "y": 100,
-        "z": -44
-      }
-    }
-  ],
-  "footprints": {
-    "cathedral": {
-      "rel": {
-        "x1": -6,
-        "x2": 280,
-        "z1": -64,
-        "z2": 64
-      }
-    },
-    "plaza": {
-      "rel": {
-        "x1": -46,
-        "x2": -6,
-        "z1": -60,
-        "z2": 60
-      }
-    }
-  }
+
+  "protected": [],
+
+  "footprints": {},
+
+  "extraAllowedBlocks": []
 }

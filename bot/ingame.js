@@ -56,6 +56,34 @@ function parseEvents(stdout) {
 }
 
 /**
+ * 跨平台地决定"怎么启动一次 DSH headless 任务"。
+ *
+ * - Windows：调用 run-agent.ps1（优先 pwsh，回退到系统自带的 powershell.exe）
+ * - macOS / Linux：调用 run-agent.sh（交给 /usr/bin/env bash，不依赖可执行位）
+ * - 任何平台都可用 MC_AGENT_CMD 显式覆盖（例如指向自建的包装脚本）
+ */
+function resolveAgentCommand(args) {
+  const override = process.env.MC_AGENT_CMD
+  if (override) return { cmd: override, args }
+
+  if (process.platform === 'win32') {
+    const ps = process.env.MC_POWERSHELL ?? (process.env.PWSH_PATH || 'powershell.exe')
+    const script = join(ROOT, 'run-agent.ps1')
+    // -NoProfile 避免用户 profile 里的 ExecutionPolicy/别名干扰；
+    // -ExecutionPolicy Bypass 让未签名脚本能跑（等价于 README 里让用户自己设的那一步）
+    return {
+      cmd: ps,
+      args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, ...args],
+    }
+  }
+
+  return {
+    cmd: '/usr/bin/env',
+    args: ['bash', join(ROOT, 'run-agent.sh'), ...args],
+  }
+}
+
+/**
  * @param {object} options
  * @param {object} options.manager BotManager（提供 whisperTo）
  * @param {(...a:any[]) => void} options.log
@@ -98,7 +126,8 @@ export function createIngameBridge({ manager, log }) {
       if (sessionId) args.push('--session-id', sessionId)
       args.push(prompt)
 
-      const child = spawn(join(ROOT, 'run-agent.sh'), args, {
+      const cmd = resolveAgentCommand(args)
+      const child = spawn(cmd.cmd, cmd.args, {
         cwd: ROOT,
         env: { ...process.env, MC_PROFILE: profile },
       })

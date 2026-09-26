@@ -19,6 +19,10 @@ server.in
 server.pid
 fifo-holder.pid
 session.lock
+# Windows 版的进程记录与锁文件（run-*.ps1）
+server.pid.json
+daemon.pid.json
+*.pid.json
 
 # ---- 服务端运行态（server.properties 含 management-server-secret）----
 server.properties
@@ -32,10 +36,12 @@ banned-players.json
 
 # ---- 依赖与生成产物 ----
 node_modules/
-build/cathedral/snapshots/
-build/cathedral/phase0-survey.json
-build/cathedral/verify-last.json
+build/snapshots/
+build/verify-last.json
 publish/
+
+# ---- Windows: Java 自动下载目录（tools/install-java-win.ps1 的产物）----
+.runtime/
 
 # ---- 资源包产物 / 参考图（含商标或来源不明素材）----
 skins/*.zip

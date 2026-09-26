@@ -68,3 +68,64 @@
 2. 接入面：**新 profile 与 web profile 两者都做**（web 需重启，另行确认时机）
 3. MCP Server：**自研薄封装**
 4. 同意：EULA `eula=true` ✅、`online-mode=false` ✅、仅绑定 `127.0.0.1` ✅；**不安装 26.1 客户端**（本轮只跑机器人，不联机旁观）
+
+---
+
+# P9 增量 · Windows 环境事实快照
+
+采集方式同 P0：**实测**，不是查文档。
+
+## 主机
+
+| 项 | 值 | 来源 |
+|---|---|---|
+| OS | Windows 11 (build 10.0.22621), x64 | `$PSVersionTable` / Win32 |
+| PowerShell | **5.1.22621.6133**（系统自带；所有脚本按 PS 5.1 兼容写） | `$PSVersionTable.PSVersion` |
+| Node / npm | v24.14.1 / 11.12.1 | `node --version` |
+| Python | 已装（`python` 在 PATH） | `python -m py_compile` 通过 |
+| 系统 Java | **JDK 24.0.1**（`C:\Program Files\Java\jdk-24`）+ JRE 1.8.0_491；PATH 上是 Oracle `javapath` → **24** | 实测 |
+| Minecraft Launcher | `.minecraft\versions` 有 **26.1 / 26.2 / 26.3** 等 5 个版本；`PCL.ini` 显示用 PCL2 | 目录 + 配置 |
+| `.minecraft\runtime\` | **不存在**（PCL2 自管 Java，借不到启动器自带 JRE） | 实测 |
+| MC 26.1 所需 Java | 客户端 `versions\26.1\26.1.json` 的 `javaVersion.majorVersion` = **25**，component `java-runtime-epsilon` | 直接读该 JSON |
+
+→ **结论：本机原状跑不了 26.1 服务端**（只有 24 和 8）。必须补 JDK 25，这就是 `tools/install-java-win.ps1` 存在的原因。
+
+## 补上的 Java 25
+
+| 项 | 值 |
+|---|---|
+| 分发 | Microsoft Build of OpenJDK 25.0.4.1 LTS |
+| 入口 | `https://aka.ms/download-jdk/microsoft-jdk-25-windows-x64.zip`（302 → `download.visualstudio.microsoft.com/.../microsoft-jdk-25.0.4.1-windows-x64.zip`） |
+| 大小 | 210.5 MB（zip）/ 解压后 584 MB |
+| 落点 | `<仓库>\.runtime\jdk-25\`（**不改系统 PATH、不改注册表、不写 Program Files**，删目录即回退） |
+| 指针 | `<仓库>\.runtime\java-path.txt`，`run-server.ps1` 自动读取 |
+
+## Windows 上实测通过的链路
+
+| 项 | 结果 |
+|---|---|
+| `run-server.ps1 java` | 探测到 4 个候选，正确识别 25/24/24/8，选中 25 ✅ |
+| `run-server.ps1 start` | 真实启动 MC 26.1 → `Done (0.234s)! For help, type "help"` ✅ |
+| `run-server.ps1 cmd "list"` | 命名管道回环 → 服务端日志 `There are 2 of a max of 5 players online: ...` ✅ |
+| `run-server.ps1 stop` | **优雅停机** → `Saving worlds` → `Saving chunks ... All dimensions are saved` → 干净退出 ✅ |
+| `run-server.ps1 status` | 进程、`Done` 行、`server-ip`/`server-port`、加入次数、端口占用 PID ✅ |
+| `run-daemon.ps1 start` | `DeepSeekBot` 真实登入：服务端 `logged in with entity id 493`；`/health` → `connected:true` ✅ |
+| `run-daemon.ps1 stop` | 服务端记录 `DeepSeekBot left the game` ✅ |
+| MCP（Windows） | `tools/list` = **23** 个工具；`mc_status` 拿到真实坐标；`mc_collect` 让背包 `0 -> 2` ✅ |
+| S2 回归 | **8/8 PASS** ✅ |
+| `test-p0-tools.js` | **14/14 PASS**（1 项按设计跳过：模板 `protected[]` 为空）✅ |
+| `run-agent.ps1` 启动链路 | 正确识别"无源码 checkout"→ 回退全局 `dsh`，参数与报错如实透传 ✅ |
+
+## Windows 上未验证 / 需要先配置
+
+| 项 | 状态 |
+|---|---|
+| `run-agent.ps1` 的**实际 headless 任务** | ⏸ 被 profile 挡住：本机 `~\.dsh\profiles` 只有 `web`，没有 `minecraft`。dsh 报 `profile "minecraft" does not exist`。需先按 README「配置要点」建好 profile |
+| 游戏内 `/msg DeepSeekBot` 全链路 | ⏸ 同上（daemon 已能收私聊，但每个 turn 要调 `run-agent` → 需要 profile） |
+| S4 / S5 / S6 / S7 长链在 Windows 上重跑 | ⏸ 未做（S2 与 P0 工具边界已在 Windows 上重跑通过） |
+
+## Windows 上的 6 个已修坑
+
+见 [PLAN.md](PLAN.md) §9.3 的表格（`.ps1` 必须有 UTF-8 BOM、`$ErrorActionPreference='Stop'` 吃掉 java stderr、`OutputDataReceived` 回调在阻塞的 runspace 里排不上、`Select-String` 遇共享锁静默失败、`Start-Process` 不许 stdout/stderr 同文件、`-like` 锚定误命中）。
+下载侧：`HttpWebRequest` / `HttpClient` 同步 Read / `Start-BitsTransfer` **三者都会卡死**，故自研 **异步读 + 60s stall 判定 + HTTP Range 续传**，实测 210.5 MB / 26s 完成。
+

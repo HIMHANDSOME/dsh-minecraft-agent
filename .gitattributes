@@ -1,0 +1,44 @@
+# ============================================================
+#  行尾与二进制类型声明
+#
+#  没有这个文件时，core.autocrlf=true 的机器每次 checkout 都会重写
+#  工作区行尾，diff 里全是噪声；更麻烦的是 .ps1 在 Windows 上
+#  期望 CRLF，而这里远程仓库里存的是 LF。
+#
+#  约定：
+#    * 一切文本默认按 LF 存进仓库（正常化，跨平台一致）
+#    * .ps1 显式使用 CRLF（Windows PowerShell 5.1 的习惯用法，编辑器不会报"混合行尾"）
+#    * .sh 必须 LF（CRLF 会让 bash 报 "bad interpreter: No such file or directory"）
+# ============================================================
+
+* text=auto
+
+*.ps1   text eol=crlf
+*.psm1  text eol=crlf
+*.psd1  text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.py    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.properties text eol=lf
+
+# ---- 二进制：禁止任何行尾转换 ----
+*.jar   binary
+*.zip   binary
+*.gz    binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.pdf   binary

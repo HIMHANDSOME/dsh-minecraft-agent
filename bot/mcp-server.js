@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url'
 
 const { pathfinder, Movements, goals } = pathfinderPkg
 
-// P0 批量施工能力（building.md §0）：受控的 mc_fill / mc_scan_region / mc_batch。
+// P0 批量建造能力（building.md §0）：受控的 mc_fill / mc_scan_region / mc_batch_place。
 // 复用 builder-core 的白名单、施工区/保护圈校验、逐条回执与审计。
 import {
   fill as controlledFill,
@@ -36,7 +36,7 @@ let SITE = null
 try {
   SITE = loadSite()
 } catch (e) {
-  log('site.json 未就绪，mc_fill/mc_batch 暂不做施工区校验:', e.message)
+  log('site.json 未就绪，mc_fill/mc_batch_place 暂不做施工区校验:', e.message)
 }
 
 const HOST = process.env.MC_HOST ?? '127.0.0.1'
@@ -1639,7 +1639,7 @@ function buildServer() {
     },
   )
 
-  // ---------------------------------------------------------------- P0 批量施工
+  // ---------------------------------------------------------------- P0 批量建造
   const boxSchema = {
     x1: z.number().int(), y1: z.number().int(), z1: z.number().int(),
     x2: z.number().int(), y2: z.number().int(), z2: z.number().int(),
@@ -1650,7 +1650,7 @@ function buildServer() {
     {
       title: '批量填充（受控 /fill）',
       description:
-        '用一个长方体一次填充方块（等价于原版 /fill，但受控）：坐标必须落在 site.json 的施工区内、' +
+        '用一个长方体一次填充方块（等价于原版 /fill，但受控）：坐标必须落在 build/site.json 的施工区内、' +
         '方块必须在材料白名单内、体积 <= 32768。逐条读取服务端回执并写审计日志。' +
         'mode: replace / keep / hollow / outline / destroy。dryRun=true 只校验不写入。',
       inputSchema: {
@@ -1674,7 +1674,7 @@ function buildServer() {
     {
       title: '区域实测（方块直方图）',
       description:
-        '只读：返回限定长方体区域内每种方块的计数与各自第一处坐标，用于复核柱网、镜像、门洞。' +
+        '只读：返回限定长方体区域内每种方块的计数与各自第一处坐标，用于复核结构、对称与门洞。' +
         '体积上限 400000 格，超出请分块。',
       inputSchema: { ...boxSchema, maxCells: z.number().int().min(1000).max(400000).default(400000) },
     },
@@ -1688,10 +1688,10 @@ function buildServer() {
   register(
     'mc_batch_place',
     {
-      title: '批量施工（多条指令，逐条对账）',
+      title: '批量建造（多条指令，逐条对账）',
       description:
         '一次提交多条 {x1,y1,z1,x2,y2,z2,block,mode} 操作，按顺序执行并逐条返回成功/失败；' +
-        '每条都走与 mc_fill 相同的校验与审计。用于按阶段/按开间批量施工。' +
+        '每条都走与 mc_fill 相同的校验与审计。用于按阶段/按分区批量建造。' +
         'allowedBlocks 可先查看白名单。',
       inputSchema: {
         ops: z.array(z.object({
@@ -1722,10 +1722,22 @@ function buildServer() {
     'mc_allowed_blocks',
     {
       title: '查看材料白名单',
-      description: '返回 mc_fill / mc_batch_place 允许使用的方块名（对应 building.md §2 材料规范）。',
+      description:
+        '返回 mc_fill / mc_batch_place 允许使用的方块名（对应 building.md §2 材料规范）；' +
+        '项目可在 build/site.json 的 extraAllowedBlocks 里追加。',
       inputSchema: {},
     },
-    async () => ok({ ok: true, count: ALLOWED_BLOCKS.size, blocks: [...ALLOWED_BLOCKS].sort() }),
+    async () =>
+      ok({
+        ok: true,
+        count: ALLOWED_BLOCKS.size + (SITE?.extraAllowedBlocks?.length ?? 0),
+        blocks: [
+          ...new Set([
+            ...[...ALLOWED_BLOCKS].sort(),
+            ...(SITE?.extraAllowedBlocks ?? []),
+          ]),
+        ],
+      }),
   )
 
   register(

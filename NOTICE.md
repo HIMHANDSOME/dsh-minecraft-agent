@@ -41,8 +41,9 @@
 | 已排除内容 | 排除原因 |
 |---|---|
 | `minecraft-server-26.1/server.properties` | 含 `management-server-secret` 等本机密钥；仓库改为提供 `server.properties.example`（密钥已置空） |
-| `logs/`（含 `mcp-audit.jsonl`、`cathedral-audit.jsonl`） | 运行日志，体积约 4.4 MB；仅含机器人测试名，仍按最小化原则排除 |
-| `build/cathedral/snapshots/`、`phase0-survey.json` | 生成产物，合计约 32 MB |
+| `logs/`（含 `mcp-audit.jsonl`、`build-audit.jsonl`） | 运行日志；仅含机器人测试名，仍按最小化原则排除 |
+| `build/snapshots/`、`build/verify-last.json` | 批量建造的调色板快照与校验结果，属生成产物 |
+| `.runtime/` | `tools/install-java-win.ps1` 下载的 JDK（约 190 MB），应由脚本按需下载 |
 | `bot/node_modules/` | 第三方依赖（约 493 MB），应由 `npm install` 获得 |
 | `tmp/ref/*.webp` | 3 张来源不明的参考图，版权状态无法确认 |
 | `skins/DeepSeek-whale-chan.zip`、`skins/pack-build/`、`skins/preview*.png` | 资源包产物与预览图；含 DeepSeek 鲸鱼 logo 的衍生美术，涉商标，随源码排除 |

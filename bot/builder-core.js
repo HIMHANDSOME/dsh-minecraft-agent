@@ -1,7 +1,7 @@
 /**
- * builder-core.js —— 受控批量施工核心库（满足 building.md §0 的 P0 能力缺口）
+ * builder-core.js —— 受控批量建造核心库（满足 building.md §0 的 P0 能力缺口）
  *
- * 背景：现有 19 个 MCP 工具只有单块 mc_place / mc_dig，无法可靠完成 274x180 的工程。
+ * 背景：基础工具里建造只有单块 mc_place、拆除只有 mc_dig，无法可靠完成大型工程。
  * 本库在“机器人 + 原版 /fill”之上做一层**受控**封装，所有写入都经过：
  *   1) 坐标校验：必须落在配置允许的施工区内；禁止碰保护圈（既有作品、玩家周围）
  *   2) 方块校验：必须在材料白名单内（building.md §2），未知名单直接拒绝
@@ -29,66 +29,99 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 export const at = (bot, x, y, z) => bot.blockAt(new Vec3(x, y, z))
 
 // ---------------------------------------------------------------------------
-// 材料白名单（building.md §2）
+// 材料白名单（building.md §2 材料规范）
+// 这是**默认**清单：按你的项目在 build/site.json 的 extraAllowedBlocks 里追加，
+// 或直接改这里。不在清单内的方块一律拒绝，避免 Agent 误放不相关的东西。
 // ---------------------------------------------------------------------------
 export const ALLOWED_BLOCKS = new Set([
-  // 主结构
-  'stone_bricks', 'andesite', 'polished_andesite',
-  // 肋拱/高光
-  'calcite',
-  // 墙体老化
-  'cracked_stone_bricks', 'mossy_stone_bricks', 'tuff_bricks', 'polished_tuff', 'deepslate_bricks',
-  // 屋面与木作
-  'deepslate_tiles', 'polished_deepslate', 'dark_oak_planks', 'dark_oak_log', 'stripped_dark_oak_log',
-  'spruce_planks', 'spruce_log', 'stripped_spruce_log',
-  // 金属与照明
-  'iron_bars', 'iron_chain', 'lantern', 'soul_lantern',
-  // 玻璃（彩窗）
-  'glass', 'glass_pane',
+  // 石材结构
+  'stone', 'smooth_stone', 'stone_bricks', 'chiseled_stone_bricks', 'cracked_stone_bricks',
+  'mossy_stone_bricks', 'andesite', 'polished_andesite', 'diorite', 'polished_diorite',
+  'granite', 'polished_granite', 'deepslate_bricks', 'chiseled_deepslate', 'polished_deepslate',
+  'deepslate_tiles', 'tuff_bricks', 'polished_tuff', 'chiseled_tuff', 'calcite',
+  'cobblestone', 'mossy_cobblestone', 'bricks', 'quartz_block', 'smooth_quartz', 'sandstone',
+  'smooth_sandstone', 'cut_sandstone', 'prismarine', 'prismarine_bricks',
+  'concrete', 'white_concrete', 'light_gray_concrete', 'gray_concrete', 'black_concrete',
+  'brown_concrete', 'red_concrete', 'orange_concrete', 'yellow_concrete', 'lime_concrete',
+  'green_concrete', 'cyan_concrete', 'light_blue_concrete', 'blue_concrete', 'purple_concrete',
+  'magenta_concrete', 'pink_concrete',
+  // 木作
+  'oak_log', 'stripped_oak_log', 'oak_planks', 'spruce_log', 'stripped_spruce_log', 'spruce_planks',
+  'birch_log', 'stripped_birch_log', 'birch_planks', 'jungle_log', 'jungle_planks',
+  'acacia_log', 'acacia_planks', 'dark_oak_log', 'stripped_dark_oak_log', 'dark_oak_planks',
+  'mangrove_log', 'mangrove_planks', 'cherry_log', 'cherry_planks', 'bamboo_planks',
+  'crimson_planks', 'warped_planks',
+  // 玻璃（含全部染色，窗与采光）
+  'glass', 'glass_pane', 'tinted_glass',
   'white_stained_glass', 'white_stained_glass_pane',
   'light_gray_stained_glass', 'light_gray_stained_glass_pane',
   'gray_stained_glass', 'gray_stained_glass_pane',
   'black_stained_glass', 'black_stained_glass_pane',
-  'blue_stained_glass', 'blue_stained_glass_pane',
-  'light_blue_stained_glass', 'light_blue_stained_glass_pane',
-  'cyan_stained_glass', 'cyan_stained_glass_pane',
-  'purple_stained_glass', 'purple_stained_glass_pane',
-  'magenta_stained_glass', 'magenta_stained_glass_pane',
+  'brown_stained_glass', 'brown_stained_glass_pane',
   'red_stained_glass', 'red_stained_glass_pane',
-  'pink_stained_glass', 'pink_stained_glass_pane',
   'orange_stained_glass', 'orange_stained_glass_pane',
   'yellow_stained_glass', 'yellow_stained_glass_pane',
   'lime_stained_glass', 'lime_stained_glass_pane',
   'green_stained_glass', 'green_stained_glass_pane',
-  'brown_stained_glass', 'brown_stained_glass_pane',
-  // 门/楼梯/台阶/墙/栅栏/活板（哥特细节）
-  'dark_oak_door', 'spruce_door', 'iron_door',
+  'cyan_stained_glass', 'cyan_stained_glass_pane',
+  'light_blue_stained_glass', 'light_blue_stained_glass_pane',
+  'blue_stained_glass', 'blue_stained_glass_pane',
+  'purple_stained_glass', 'purple_stained_glass_pane',
+  'magenta_stained_glass', 'magenta_stained_glass_pane',
+  'pink_stained_glass', 'pink_stained_glass_pane',
+  // 楼梯 / 台阶 / 墙 / 栅栏 / 门 / 活板
   'stone_brick_stairs', 'stone_brick_slab', 'stone_brick_wall',
-  'polished_andesite_stairs', 'polished_andesite_slab',
+  'polished_andesite_stairs', 'polished_andesite_slab', 'polished_andesite_wall',
   'deepslate_tile_stairs', 'deepslate_tile_slab', 'deepslate_tile_wall',
   'polished_deepslate_stairs', 'polished_deepslate_slab', 'polished_deepslate_wall',
   'deepslate_brick_stairs', 'deepslate_brick_slab', 'deepslate_brick_wall',
   'tuff_brick_stairs', 'tuff_brick_slab', 'tuff_brick_wall',
-  'cobblestone', 'cobblestone_wall', 'cobblestone_stairs', 'cobblestone_slab',
-  'mossy_cobblestone', 'stone', 'smooth_stone', 'stone_slab', 'stone_stairs',
-  'chiseled_stone_bricks', 'chiseled_deepslate', 'chiseled_tuff',
-  'dark_oak_fence', 'spruce_fence', 'dark_oak_slab', 'spruce_slab',
-  'dark_oak_stairs', 'spruce_stairs', 'ladder', 'scaffolding',
-  // 地基/地形
-  'dirt', 'coarse_dirt', 'grass_block', 'gravel', 'water',
-  // 特殊
-  'air', 'light', 'sea_lantern', 'glowstone', 'torch', 'wall_torch',
-  'gold_block', 'quartz_block', 'smooth_quartz', 'quartz_stairs', 'quartz_slab',
-  'bell', 'bookshelf', 'oak_planks', 'oak_fence',
-  'chest', 'barrel', 'trapped_chest', 'lectern', 'candle', 'candle_cake',
+  'cobblestone_wall', 'cobblestone_stairs', 'cobblestone_slab',
+  'stone_slab', 'stone_stairs', 'brick_stairs', 'brick_slab',
+  'quartz_stairs', 'quartz_slab', 'smooth_quartz_stairs', 'smooth_quartz_slab',
+  'sandstone_stairs', 'sandstone_slab', 'smooth_sandstone_stairs', 'smooth_sandstone_slab',
+  'oak_stairs', 'oak_slab', 'oak_fence', 'oak_door', 'oak_trapdoor',
+  'spruce_stairs', 'spruce_slab', 'spruce_fence', 'spruce_door', 'spruce_trapdoor',
+  'birch_stairs', 'birch_slab', 'birch_fence', 'birch_door',
+  'dark_oak_stairs', 'dark_oak_slab', 'dark_oak_fence', 'dark_oak_door', 'dark_oak_trapdoor',
+  'iron_door', 'iron_trapdoor', 'iron_bars', 'ladder', 'scaffolding',
+  // 金属与照明
+  'iron_block', 'gold_block', 'copper_block', 'cut_copper', 'oxidized_copper',
+  'lantern', 'soul_lantern', 'sea_lantern', 'glowstone', 'shroomlight',
+  'torch', 'wall_torch', 'soul_torch', 'end_rod', 'light', 'froglight', 'ochre_froglight',
+  'verdant_froglight', 'pearlescent_froglight',
+  // 地基 / 地形
+  'dirt', 'coarse_dirt', 'rooted_dirt', 'grass_block', 'podzol', 'mycelium', 'gravel',
+  'sand', 'red_sand', 'clay', 'snow_block', 'ice', 'packed_ice', 'blue_ice', 'water',
+  // 家具与储物
+  'chest', 'trapped_chest', 'barrel', 'lectern', 'bookshelf', 'chiseled_bookshelf',
+  'crafting_table', 'furnace', 'blast_furnace', 'smoker', 'anvil', 'bell',
+  'candle', 'candle_cake', 'flower_pot', 'decorated_pot', 'armor_stand',
+  // 植被与装饰
+  'oak_leaves', 'spruce_leaves', 'birch_leaves', 'dark_oak_leaves', 'azalea_leaves',
+  'grass', 'short_grass', 'fern', 'flowering_azalea', 'moss_block', 'moss_carpet',
+  'vine', 'glow_lichen', 'lily_pad', 'hay_block',
+  'white_wool', 'light_gray_wool', 'gray_wool', 'black_wool', 'brown_wool', 'red_wool',
+  'orange_wool', 'yellow_wool', 'lime_wool', 'green_wool', 'cyan_wool', 'light_blue_wool',
+  'blue_wool', 'purple_wool', 'magenta_wool', 'pink_wool',
+  'white_carpet', 'red_carpet', 'blue_carpet', 'gray_carpet', 'black_carpet',
+  // 空气（用于挖掘/清空）
+  'air',
 ])
 
 export const AIR = 'air'
 
+/** 白名单判定：默认清单 + 项目自定义 build/site.json 里的 extraAllowedBlocks。 */
+export function isAllowedBlock(name, site = null) {
+  const n = String(name).replace(/^minecraft:/, '')
+  if (ALLOWED_BLOCKS.has(n)) return true
+  return (site?.extraAllowedBlocks ?? []).map((s) => String(s).replace(/^minecraft:/, '')).includes(n)
+}
+
 // ---------------------------------------------------------------------------
 // 审计 / 快照
 // ---------------------------------------------------------------------------
-export const AUDIT_PATH = process.env.MC_CATHEDRAL_AUDIT ?? join(ROOT, 'logs', 'cathedral-audit.jsonl')
+export const AUDIT_PATH = process.env.MC_BUILD_AUDIT ?? join(ROOT, 'logs', 'build-audit.jsonl')
 
 export function audit(entry) {
   try {
@@ -102,7 +135,13 @@ export function audit(entry) {
 // ---------------------------------------------------------------------------
 // Bot 连接
 // ---------------------------------------------------------------------------
-export async function connect({ user = 'BuilderBot', host = '127.0.0.1', port = 11451, version = '26.1', timeoutMs = 30000 } = {}) {
+export async function connect({
+  user = process.env.MC_USER ?? 'BuilderBot',
+  host = process.env.MC_HOST ?? '127.0.0.1',
+  port = Number(process.env.MC_PORT ?? 25565),
+  version = process.env.MC_VERSION ?? '26.1',
+  timeoutMs = 30000,
+} = {}) {
   const bot = mineflayer.createBot({ host, port, username: user, version, auth: 'offline', checkTimeoutInterval: 60000 })
   // 聊天记录（命令回执靠它）
   bot._chatLines = []
@@ -140,11 +179,12 @@ export function waitForChat(bot, regex, { timeoutMs = 5000, since = 0 } = {}) {
 // ---------------------------------------------------------------------------
 /**
  * 施工区定义（世界坐标，绝对）。
- * 由 PHASE 0/1 冻结后写入 build/site.json；本库只读取，不猜。
+ * 由 PHASE 0/1 勘察后写入 build/site.json；本库只读取，不猜。
+ * 仓库自带的是模板骨架，请按自己的地形改成真实值。
  */
 export function loadSite() {
-  const p = join(ROOT, 'build', 'site.json')
-  if (!existsSync(p)) throw new Error(`缺少 ${p}：必须先完成 PHASE 0/1 勘察并冻结原点`)
+  const p = process.env.MC_SITE_FILE ?? join(ROOT, 'build', 'site.json')
+  if (!existsSync(p)) throw new Error(`缺少 ${p}：必须先完成 PHASE 0/1 勘察并冻结原点与施工区`)
   return JSON.parse(readFileSync(p, 'utf8'))
 }
 
@@ -222,7 +262,7 @@ export async function fill(bot, box, block, { mode = 'replace', site = null, reg
     z1: Math.min(box.z1, box.z2), z2: Math.max(box.z1, box.z2),
   }
   const name = normBlock(block)
-  if (!ALLOWED_BLOCKS.has(name)) return { ok: false, error: `方块不在白名单: ${name}` }
+  if (!isAllowedBlock(name, site)) return { ok: false, error: `方块不在白名单: ${name}` }
 
   const vol = (b.x2 - b.x1 + 1) * (b.y2 - b.y1 + 1) * (b.z2 - b.z1 + 1)
   if (vol > 32768) return { ok: false, error: `单条 fill 体积 ${vol} > 32768，请拆分` }
@@ -268,7 +308,7 @@ export async function fill(bot, box, block, { mode = 'replace', site = null, reg
 
 export async function setblock(bot, x, y, z, block, { site = null, region = 'work', timeoutMs = 20000 } = {}) {
   const name = normBlock(block)
-  if (!ALLOWED_BLOCKS.has(name)) return { ok: false, error: `方块不在白名单: ${name}` }
+  if (!isAllowedBlock(name, site)) return { ok: false, error: `方块不在白名单: ${name}` }
   if (site) {
     if (!inRegion(site, x, y, z, region)) return { ok: false, error: `坐标 (${x},${y},${z}) 超出施工区` }
     const prot = inProtected(site, x, y, z)

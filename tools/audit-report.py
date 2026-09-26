@@ -6,8 +6,10 @@
 有没有编造。用法：
 
     ./tools/audit-report.py                # 全部
+    python tools/audit-report.py           # Windows
     ./tools/audit-report.py --tail 20      # 最近 20 次调用
     ./tools/audit-report.py --json         # 原始 JSON 逐行
+    ./tools/audit-report.py --build        # 改看批量建造审计（build-audit.jsonl）
 """
 import argparse
 import json
@@ -16,6 +18,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_LOG = os.path.join(HERE, "..", "logs", "mcp-audit.jsonl")
+BUILD_LOG = os.path.join(HERE, "..", "logs", "build-audit.jsonl")
 
 # 优先展示这些字段，避免整棵实体树刷屏
 KEEP = (
@@ -34,15 +37,19 @@ def shorten(value, limit=160):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--log", default=DEFAULT_LOG)
+    ap.add_argument("--log", default=None)
     ap.add_argument("--tail", type=int, default=0, help="只看最近 N 次调用")
     ap.add_argument("--json", action="store_true", help="输出原始 JSON 行")
+    ap.add_argument("--build", action="store_true", help="改看批量建造审计（logs/build-audit.jsonl）")
     args = ap.parse_args()
+
+    if args.log is None:
+        args.log = BUILD_LOG if args.build else DEFAULT_LOG
 
     path = os.path.abspath(args.log)
     if not os.path.exists(path):
         print(f"找不到审计日志: {path}", file=sys.stderr)
-        print("先跑一次 ./run-agent.sh 或 node bot/test-s2.js", file=sys.stderr)
+        print("先跑一次 run-agent 或 node bot/test-s2.js", file=sys.stderr)
         return 1
 
     rows = []

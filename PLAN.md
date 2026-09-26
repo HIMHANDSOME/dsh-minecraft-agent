@@ -280,3 +280,60 @@ run-agent.sh（MC_PROFILE=minecraft-ingame）──streamable-http──▶ 同�
 | P8.2 交付可靠性 | 受控探针 `probe-give3.js`：`itemToPlayerDistance 0.9`、玩家背包 `[] → oak_log:3` |
 | P8.3 端到端 | S7 双角色协同 **7/7**：互见 / 跟随 1.0 格 / 停止 / 过来 0.0 格 / 给东西成功 |
 | P8.4 回归 | R2：S2 8/8、S5 5/5 未被破坏 |
+
+---
+
+# 增量 P9（追加需求）：去项目化 + Windows 原生支持
+
+**追加需求**：把某一次具体建筑工程（山地哥特大教堂）的专属内容全部移除，只保留通用的 Agent + MCP 建造骨架；并新增原生 Windows（PowerShell + 本机 JDK 25）支持。
+
+## 9.1 去项目化（把一次性工程还原成通用骨架）
+
+| 处理 | 对象 |
+|---|---|
+| **删除** | `build/cathedral/**`（41 个阶段脚本 + 40 个断点 + `verify/layout/tower/vault/pier/eastend/survey/drive.sh`）、`build/CATHEDRAL-STATUS.md` |
+| **改为通用模板** | `build/site.json`（原点 / 施工区 / 保护圈 / 追加白名单，全部改成占位模板） |
+| **重写为通用规范** | `building.md`：保留「能力清点 → 坐标契约 → 分区 → 结构剖面 → 阶段路线 → 审计顺序 → 每轮报告模板 → 审计与回滚」，删除全部哥特形制（双塔 / 中殿 / 飞扶壁 / 玫瑰窗 / 地下墓室 / 管风琴…）与专属尺寸 |
+| **泛化** | `bot/builder-core.js`：材料白名单从"哥特石材"扩到通用建造集（250 项，石材/木作/全色玻璃/楼梯台阶/家具/植被），新增 `extraAllowedBlocks` 追加机制与 `isAllowedBlock()`；默认端口 `11451 → 25565`，接 `MC_HOST/MC_PORT/MC_USER/MC_VERSION` |
+| **改名** | 审计日志 `cathedral-audit.jsonl → build-audit.jsonl`，环境变量 `MC_CATHEDRAL_AUDIT → MC_BUILD_AUDIT` |
+| **删除（客户端 LAN 遗留）** | `bot/port-proxy.js`、`bot/probe-lan.js`、`build/build-courtyard.js`、`build/courtyard-plan.json`（后两者是空的 `site.json` 下已不可运行的弃用记录） |
+| **泛化** | `bot/test-p0-tools.js`：坐标全部从 `build/site.json` 推导，不再写死项目数值；新增"dryRun 前后直方图一致"与"`mc_batch_place` 逐条对账"两条用例 |
+| **更新** | `README.md`（平台表 + Windows 章节 + 23 工具表 + 大批量建造 + 环境变量表 + 排错）、`RESULTS.md`（工具数演进说明 + R3）、`NOTICE.md`、`.gitignore` |
+
+**验收**：全仓库 `grep` 无 `cathedral|哥特|大教堂|CATHEDRAL|11451` 残留（历史性文档 `recon.md`/`PLAN.md` 里的历史事实除外）。
+
+## 9.2 Windows 原生支持
+
+| 交付 | 说明 |
+|---|---|
+| `run-server.ps1` | 服务器 start / stop / restart / status / cmd / tail / reset-world / **java**。Java **必须主版本 ≥ 25**，7 级探测链（参数 → `MC_JAVA` → `JAVA_HOME` → `.runtime\` → PATH → 常见安装目录 → 注册表），不满足时给出可操作的补法 |
+| `run-daemon.ps1` | 常驻机器人 daemon，MCP HTTP + 游戏内私聊；用 `logs\daemon.pid.json` 精确定位进程（不误杀别的 `node.exe`） |
+| `run-agent.ps1` | 一次性任务，等价于 `run-agent.sh`（找 `tsx`、设 `TSX_TSCONFIG_PATH`、留在项目 cwd） |
+| `tools/install-java-win.ps1` | 下载 Microsoft OpenJDK 25（zip，解压即用）到 `<仓库>\.runtime\`，**不改系统 PATH / 注册表 / Program Files**；`-UseSystem` 只做校验登记 |
+| `bot/ingame.js` 跨平台 | 原来写死 `spawn('run-agent.sh')`，改为按 `process.platform` 选 `.ps1`（`pwsh`/`powershell`）或 `.sh`（`bash`），可用 `MC_AGENT_CMD` 覆盖 |
+| 控制台通道 | Windows 无 `mkfifo`：改为后台作业持有服务端进程 stdin + 命令队列文件轮询；对使用者仍是同一个 `cmd` 命令 |
+
+**验收（本次实测）**：PowerShell 语法解析全绿；Java 探测在"本机只有 JDK 24 + JRE 8"的环境下正确识别并拒绝；`tools\install-java-win.ps1` 下载（**可续传**，见下）并解压出 OpenJDK 25.0.4.1；`run-server.ps1 start` 真实启动 MC **26.1** 服务端到 `Done (0.217s)`；`status` / `cmd "list"`（命名管道回环，服务端真的回 `There are N of a max of 5 players online`）/ `stop`（**优雅停机**，`Saving worlds` → 干净退出）全部可用；`run-daemon.ps1 start` 让 `DeepSeekBot` 真实登入（服务端日志 `logged in with entity id 493`），`/health` 返回 `connected:true`，`stop` 后服务端记录 `DeepSeekBot left the game`；MCP server 在 Windows 上枚举出 **23** 个工具，S2 回归 **8/8**，`test-p0-tools.js` **14/14（1 项按设计跳过）**。
+
+### 9.3 Windows 上踩到并修掉的 6 个坑（都写进了代码注释）
+
+| # | 现象 | 真因 | 修法 |
+|---|---|---|---|
+| 1 | `.ps1` 里中文全变乱码、解析直接失败 | **PS 5.1 把无 BOM 的 `.ps1` 当 ANSI/GBK 读**（Node 里 UTF-8 无 BOM 反而正常） | 所有 `.ps1` 一律写 **UTF-8 with BOM** |
+| 2 | Java 探测一律返回"主版本 未知" | `$ErrorActionPreference='Stop'` 把原生命令的 **stderr 当终止错误**；而 `java -version` 正好把版本写 stderr | `Invoke-JavaVersionRaw` 里临时切 `Continue` 并 try/finally 还原 |
+| 3 | `console.log` 始终 0 字节（java 明明在跑） | 用了 `BeginOutputReadLine` + `OutputDataReceived`，回调要在线程池重入 runspace，而主机线程阻塞在 `WaitForConnection()` → **单线程 runspace 不可重入，回调永远排不上** | 输出泵改到**独立 runspace**（`PowerShell.Create()` + `BeginInvoke`） |
+| 4 | `start` 等满 180s 说超时，日志里 `Done` 明明已存在 | `Select-String` 打开文件的方式不含 `Write` 共享，而宿主一直持有 `console.log` → **共享冲突 + `-ErrorAction SilentlyContinue` = 静默永远找不到** | 新增共享安全的 `Get-LogLines` / `Find-LogLine`（显式 `FileShare.ReadWrite`） |
+| 5 | `daemon start` 直接报 `RedirectStandardOutput and RedirectStandardError are same` | `Start-Process` 不允许 stdout/stderr 指向同一文件 | 拆成 `daemon-node.out.log` / `daemon-node.err.log` |
+| 6 | `status` 里"监听:"显示成 `management-server-port=0` | `-like '*server-port=*'` 会误命中 `management-server-port=` | `Find-LogLine` 支持 `^` 行首锚定（走正则） |
+
+**另外**：这个 CDN 上 `HttpWebRequest`（约 700KB）、`HttpClient` 同步 Read（约 37MB）、`Start-BitsTransfer`（卡在 Connecting）**三种下载方式都会卡死**，所以 `install-java-win.ps1` 自己实现了 **异步读 + 60s stall 判定 + HTTP Range 续传**，实测 210.5 MB / 26s 拉完。
+
+### 9.4 仍未验证（需要你先做一步配置）
+
+`run-agent.ps1` 的**启动链路本身已实测**：它正确识别出本机没有 DSH 源码 checkout，回退到 PATH 上的全局 `dsh`，把 `--profile` / `--json` / `--session-id` / prompt 正确传过去，并如实透传 dsh 的报错。但你的 `~/.dsh/profiles` 下**目前只有 `web`**，没有 `minecraft`，所以真正的 headless 任务跑不通：
+
+```
+Error: dsh: profile "minecraft" does not exist; create it with 'dsh plugin --profile minecraft add <package>'
+```
+
+也就是说 **MCP 接入 profile 尚未配置**（README「配置要点」里那段）。配好之后 `run-agent.ps1` 与 daemon 的游戏内私聊才算全链路可用。
